@@ -1,3 +1,4 @@
+// src/app/api/me/continue/route.ts
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { dbConnect } from "@/lib/db";
@@ -24,14 +25,16 @@ export async function GET() {
     .lean<BookDoc | null>();
   if (!book) return NextResponse.json({ lastRead: null });
 
-  // 👇 force number (handles string/undefined)
-  const pct = Number(prog.percentage ?? 0);
+  const raw = typeof prog.percentage === "number" ? prog.percentage : 0;
+  // show at least 1% if there has been *some* progress
+  const display = raw > 0 && raw < 1 ? 1 : Math.round(raw);
+
   return NextResponse.json({
     lastRead: {
       bookId: String(prog.bookId),
       title: book.title,
       author: book.author,
-      percentage: Number.isFinite(pct) ? Math.round(pct) : 0,
+      percentage: display, // integer for UI
     },
   });
 }

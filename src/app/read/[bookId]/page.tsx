@@ -2,7 +2,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 
 const ReactReader: any = dynamic(
@@ -21,7 +21,13 @@ export default function ReaderPage() {
   const [location, setLocation] = useState<string | number | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
 
-  // 1) load book metadata (stream URL)
+  // refs so values persist across renders
+  const locationsApiRef = useRef<any>(null);
+  const saveTimerRef = useRef<any>(null);
+  const lastCfiRef = useRef<string | null>(null);
+  const lastPctRef = useRef<number>(-1);
+
+  // 1) load book metadata
   useEffect(() => {
     if (!bookId) return;
     (async () => {
@@ -29,14 +35,14 @@ export default function ReaderPage() {
         const res = await fetch(`/api/books/${bookId}`, { cache: "no-store" });
         if (!res.ok) throw new Error(`meta ${res.status}`);
         const data = await res.json();
-        setBookUrl(data.book.fileUrl as string); // e.g. /api/files/epub/<fileId>.epub
+        setBookUrl(data.book.fileUrl as string);
       } catch (e: any) {
         setError(e?.message || "Failed to load book");
       }
     })();
   }, [bookId]);
 
-  // 2) resume from saved progress (guest cookie)
+  // 2) resume from saved progress
   useEffect(() => {
     if (!bookId) return;
     (async () => {
@@ -59,54 +65,86 @@ export default function ReaderPage() {
         url={bookUrl}
         epubOptions={{ openAs: "epub" }}
         location={location}
-        locationChanged={(loc: any) => setLocation(loc)}
+        locationChanged={(loc: any) => {
+          // react-reader sometimes passes CFI string directly
+          const cfi = typeof loc === "string" ? loc : loc?.start?.cfi;
+          if (cfi) {
+            lastCfiRef.current = cfi;
+            setLocation(cfi);
+          }
+        }}
         getRendition={(rendition: any) => {
-          // Smart start (unchanged)
+          // Smart start
           rendition.book.loaded.navigation
             .then((nav: any) => {
               if (location) return;
               const toc = nav?.toc ?? [];
               const isTitle = (s: string = "") => /\b(title\s*page|titlepage|title)\b/i.test(s);
-              const coverIdx = toc.findIndex((it: any) =>
-                /cover/i.test((it?.label || it?.href || "") as string)
-              );
-              const titleItem =
-                toc.find((it: any) => isTitle(it?.label)) ||
-                toc.find((it: any) => isTitle(it?.href));
+              const coverIdx = toc.findIndex((it: any) => /cover/i.test((it?.label || it?.href || "") as string));
+              const titleItem = toc.find((it: any) => isTitle(it?.label)) || toc.find((it: any) => isTitle(it?.href));
               const afterCover = coverIdx >= 0 ? toc[coverIdx + 1] : undefined;
               const target = titleItem || afterCover || toc[0];
               if (target?.href) rendition.display(target.href).catch(() => {});
             })
             .catch(() => {});
 
-          // Generate locations and compute % from CFI
-          let locationsApi: any = null;
+          // Generate locations -> enables percentageFromCfi
           rendition.book.ready
             .then(() => rendition.book.locations.generate(1600))
-            .then(() => { locationsApi = rendition.book.locations; })
+            .then(() => {
+              locationsApiRef.current = rendition.book.locations;
+              // try an initial save once locations are ready
+              const cfi = lastCfiRef.current || (rendition?.location?.start?.cfi ?? null);
+              if (cfi) {
+                const pct01 = locationsApiRef.current.percentageFromCfi(cfi) || 0;
+                const pct = +(pct01 * 100).toFixed(1);
+                lastPctRef.current = pct;
+                fetch("/api/progress", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ bookId, cfi, percentage: pct }),
+                }).catch(() => {});
+              }
+            })
             .catch(() => {});
 
-          // Save progress (debounced)
-          let timer: any = null;
           const save = (loc: any) => {
             const cfi = loc?.start?.cfi;
+            lastCfiRef.current = cfi || lastCfiRef.current;
+
             let pct01 = 0;
-            if (locationsApi && cfi) {
-              try { pct01 = locationsApi.percentageFromCfi(cfi) || 0; } catch {}
-            } else if (typeof loc?.start?.percentage === "number") {
-              pct01 = loc.start.percentage; // rare fallback
-            }
-            const percentage = Math.min(100, Math.max(0, Math.round(pct01 * 100)));
+            try {
+              if (locationsApiRef.current && cfi) {
+                pct01 = locationsApiRef.current.percentageFromCfi(cfi) || 0;
+              } else if (typeof loc?.start?.percentage === "number") {
+                pct01 = loc.start.percentage; // fallback
+              }
+            } catch {}
+
+            const pct = +(Math.min(100, Math.max(0, pct01 * 100))).toFixed(1);
+
+            // avoid spamming: only save if changed by ≥0.2%
+            if (Math.abs(pct - lastPctRef.current) < 0.2) return;
+            lastPctRef.current = pct;
+
             fetch("/api/progress", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ bookId, cfi, percentage }),
+              body: JSON.stringify({ bookId, cfi, percentage: pct }),
             }).catch(() => {});
           };
 
+          // Save on first display + later relocates
+          rendition.on("displayed", (section: any) => {
+            const cfi = section?.start?.cfi || lastCfiRef.current;
+            if (!cfi) return;
+            // fake a loc-shape for save()
+            save({ start: { cfi } });
+          });
+
           rendition.on("relocated", (loc: any) => {
-            clearTimeout(timer);
-            timer = setTimeout(() => save(loc), 350);
+            clearTimeout(saveTimerRef.current);
+            saveTimerRef.current = setTimeout(() => save(loc), 350);
           });
         }}
         swipeable
