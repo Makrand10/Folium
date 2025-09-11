@@ -19,21 +19,9 @@ export default function ReaderPage() {
 
   const [bookUrl, setBookUrl] = useState<string | null>(null);
   const [location, setLocation] = useState<string | number | undefined>(undefined);
-  const [userId, setUserId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // 1) demo user id (replace with real auth later)
-  useEffect(() => {
-    (async () => {
-      try {
-        const r = await fetch("/api/dev/demo-user", { cache: "no-store" });
-        const j = await r.json();
-        setUserId(j.userId);
-      } catch {}
-    })();
-  }, []);
-
-  // 2) load book metadata (and stream URL)
+  // 1) load book metadata (stream URL)
   useEffect(() => {
     if (!bookId) return;
     (async () => {
@@ -41,24 +29,25 @@ export default function ReaderPage() {
         const res = await fetch(`/api/books/${bookId}`, { cache: "no-store" });
         if (!res.ok) throw new Error(`meta ${res.status}`);
         const data = await res.json();
-        setBookUrl(data.book.fileUrl as string);
+        setBookUrl(data.book.fileUrl as string); // e.g. /api/files/epub/<fileId>.epub
       } catch (e: any) {
         setError(e?.message || "Failed to load book");
       }
     })();
   }, [bookId]);
 
-  // 3) resume from saved CFI if this is the same last-read book
+  // 2) resume from saved progress (guest cookie)
   useEffect(() => {
-    if (!userId || !bookId) return;
+    if (!bookId) return;
     (async () => {
       try {
-        const r = await fetch(`/api/me/continue?userId=${userId}`, { cache: "no-store" });
+        const r = await fetch(`/api/progress?bookId=${bookId}`, { cache: "no-store" });
+        if (!r.ok) return;
         const j = await r.json();
-        if (j?.book?._id === bookId && j?.cfi) setLocation(j.cfi);
+        if (j?.progress?.cfi) setLocation(j.progress.cfi);
       } catch {}
     })();
-  }, [userId, bookId]);
+  }, [bookId]);
 
   if (!bookId)  return <div className="p-6">Missing book id…</div>;
   if (error)    return <div className="p-6 text-red-600">Error: {error}</div>;
@@ -68,11 +57,11 @@ export default function ReaderPage() {
     <div className="h-[calc(100vh-64px)]">
       <ReactReader
         url={bookUrl}
-        epubOptions={{ openAs: "epub" }}      // force zip/epub mode
+        epubOptions={{ openAs: "epub" }}
         location={location}
         locationChanged={(loc: any) => setLocation(loc)}
         getRendition={(rendition: any) => {
-          // Only pick a "smart start" if we *don't* have a saved location
+          // Smart start (unchanged)
           rendition.book.loaded.navigation
             .then((nav: any) => {
               if (location) return;
@@ -90,15 +79,34 @@ export default function ReaderPage() {
             })
             .catch(() => {});
 
-          // Save progress on every relocation
-          rendition.on("relocated", (loc: any) => {
-            if (!userId) return;
-            const percentage = (loc?.start?.percentage ?? 0) * 100;
+          // Generate locations and compute % from CFI
+          let locationsApi: any = null;
+          rendition.book.ready
+            .then(() => rendition.book.locations.generate(1600))
+            .then(() => { locationsApi = rendition.book.locations; })
+            .catch(() => {});
+
+          // Save progress (debounced)
+          let timer: any = null;
+          const save = (loc: any) => {
+            const cfi = loc?.start?.cfi;
+            let pct01 = 0;
+            if (locationsApi && cfi) {
+              try { pct01 = locationsApi.percentageFromCfi(cfi) || 0; } catch {}
+            } else if (typeof loc?.start?.percentage === "number") {
+              pct01 = loc.start.percentage; // rare fallback
+            }
+            const percentage = Math.min(100, Math.max(0, Math.round(pct01 * 100)));
             fetch("/api/progress", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ userId, bookId, cfi: loc?.start?.cfi, percentage }),
+              body: JSON.stringify({ bookId, cfi, percentage }),
             }).catch(() => {});
+          };
+
+          rendition.on("relocated", (loc: any) => {
+            clearTimeout(timer);
+            timer = setTimeout(() => save(loc), 350);
           });
         }}
         swipeable

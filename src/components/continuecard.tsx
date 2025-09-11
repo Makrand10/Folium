@@ -1,47 +1,41 @@
 "use client";
-import Link from "next/link";
-import { useEffect, useState } from "react";
 
-type Book = { _id: string; title: string; author?: string };
-type ContinueResp = { book?: Book; cfi?: string } | null;
+import { useEffect, useState } from "react";
+import Link from "next/link";
+
+type LastRead = { bookId: string; title: string; author: string; percentage: number | string };
 
 export default function ContinueCard() {
-  const [userId, setUserId] = useState<string | null>(null);
-  const [data, setData] = useState<ContinueResp>(null);
-  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState<LastRead | null>(null);
 
-  // get or create a demo user id
   useEffect(() => {
-    (async () => {
-      try {
-        const r = await fetch("/api/dev/demo-user", { cache: "no-store" });
-        const j = await r.json();
-        setUserId(j.userId);
-      } finally {
-        setLoading(false);
-      }
-    })();
+    fetch("/api/me/continue", { cache: "no-store" })
+      .then(r => r.json())
+      .then(d => setData(d?.lastRead ?? null))
+      .catch(() => setData(null));
   }, []);
 
-  // load last-read for that user
-  useEffect(() => {
-    if (!userId) return;
-    (async () => {
-      const r = await fetch(`/api/me/continue?userId=${userId}`, { cache: "no-store" });
-      const j = (await r.json()) as ContinueResp;
-      setData(j && (j as any).book ? j : null);
-    })();
-  }, [userId]);
+  if (!data) {
+    return (
+      <div className="rounded-lg border p-4 text-sm text-gray-500">
+        Nothing to continue yet.
+      </div>
+    );
+  }
 
-  if (loading) return <div className="p-4 rounded-xl border text-gray-400">Loading…</div>;
-  if (!data?.book) return <div className="p-4 rounded-xl border text-gray-500">Nothing to continue yet.</div>;
+  // 👇 coerce to number first, then clamp
+  const raw = Number((data as any).percentage ?? 0);
+  const pct = Number.isFinite(raw) ? Math.min(100, Math.max(0, raw)) : 0;
 
-  const { book } = data;
   return (
-    <Link href={`/read/${book._id}`} className="block p-4 rounded-xl border hover:shadow">
-      <div className="text-xs text-gray-500">Continue reading</div>
-      <div className="text-lg font-semibold">{book.title}</div>
-      {book.author ? <div className="text-sm">{book.author}</div> : null}
+    <Link href={`/read/${data.bookId}`} className="block rounded-lg border p-4 hover:bg-gray-50">
+      <div className="font-medium">{data.title}</div>
+      <div className="text-sm text-gray-500">{data.author}</div>
+
+      <div className="mt-3 h-2 w-full rounded bg-gray-200">
+        <div className="h-2 rounded bg-black" style={{ width: `${pct}%` }} />
+      </div>
+      <div className="mt-1 text-xs text-gray-500">{Math.round(pct)}% read</div>
     </Link>
   );
 }

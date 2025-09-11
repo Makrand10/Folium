@@ -1,35 +1,37 @@
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { dbConnect } from "@/lib/db";
-import User from "@/models/user";
-import Book from "@/models/book";
-import type { BookDoc } from "@/models/book";  // <-- use your exported type
-import { Types } from "mongoose";
+import ReadingProgress, { ReadingProgressDoc } from "@/models/readingprogress";
+import Book, { BookDoc } from "@/models/book";
 
-export async function GET(req: Request) {
+export const runtime = "nodejs";
+
+export async function GET() {
+  const jar = await cookies();
+  const userKey = jar.get("guestId")?.value;
+  if (!userKey) return NextResponse.json({ lastRead: null });
+
   await dbConnect();
-  const { searchParams } = new URL(req.url);
-  const userId = searchParams.get("userId");
-  if (!userId) return NextResponse.json({});
 
-  // lastRead typed
-  const user = await User.findById(userId)
-    .select({ lastRead: 1 })
-    .lean<{ _id: Types.ObjectId; lastRead?: { bookId?: Types.ObjectId; cfi?: string; percentage?: number } }>();
+  const prog = await ReadingProgress
+    .findOne({ userKey })
+    .sort({ updatedAt: -1 })
+    .lean<ReadingProgressDoc | null>();
+  if (!prog) return NextResponse.json({ lastRead: null });
 
-  const bid = user?.lastRead?.bookId;
-  if (!bid) return NextResponse.json({});
+  const book = await Book.findById(prog.bookId)
+    .select({ title: 1, author: 1 })
+    .lean<BookDoc | null>();
+  if (!book) return NextResponse.json({ lastRead: null });
 
-  // BOOK typed (so fileId exists)
-  const book = await Book.findById(bid)
-    .select({ title: 1, author: 1, coverUrl: 1, fileId: 1 })
-    .lean<(BookDoc & { _id: Types.ObjectId }) | null>();
-
-  if (!book) return NextResponse.json({});
-
-  const fileUrl = `/api/files/epub/${book.fileId.toString()}`;
+  // 👇 force number (handles string/undefined)
+  const pct = Number(prog.percentage ?? 0);
   return NextResponse.json({
-    book: { ...book, fileUrl },
-    cfi: user!.lastRead!.cfi,
-    percentage: user!.lastRead!.percentage ?? 0
+    lastRead: {
+      bookId: String(prog.bookId),
+      title: book.title,
+      author: book.author,
+      percentage: Number.isFinite(pct) ? Math.round(pct) : 0,
+    },
   });
 }
