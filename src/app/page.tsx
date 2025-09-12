@@ -1,3 +1,4 @@
+// Temporarily update your src/app/page.tsx to debug what the API is returning
 import SearchBar from "@/components/searchbar";
 import BookCard from "@/components/bookcard";
 import ContinueCard from "@/components/continuecard";
@@ -24,18 +25,34 @@ export default async function HomePage() {
   const session = await getServerAuthSession();
   const isAuthed = !!session?.user?.id;
 
-  // DEBUG: Add these console logs temporarily
-  console.log("🔍 SESSION DEBUG:");
-  console.log("- Full session:", JSON.stringify(session, null, 2));
-  console.log("- Is authenticated:", isAuthed);
-  console.log("- User ID:", session?.user?.id);
-  console.log("- User email:", session?.user?.email);
-
   const books = await getLatest();
+
+  // 🐛 DEBUG: Log what we're getting from the API
+  console.log("📚 BOOKS DEBUG:");
+  console.log("- Number of books:", books.length);
+  console.log("- First book data:", JSON.stringify(books[0], null, 2));
+  console.log("- All book titles and coverUrls:", books.map(b => ({ 
+    title: b.title, 
+    coverUrl: b.coverUrl,
+    hasCover: !!b.coverUrl 
+  })));
 
   return (
     <main className="max-w-6xl mx-auto px-6 py-8 space-y-8">
       <SearchBar />
+
+      {/* 🐛 DEBUG: Show raw book data temporarily */}
+      <div className="p-4 bg-blue-100 border border-blue-300 rounded">
+        <h3 className="font-semibold">📚 Books Debug Info:</h3>
+        <p>Total books: <strong>{books.length}</strong></p>
+        <p>Books with covers: <strong>{books.filter(b => b.coverUrl).length}</strong></p>
+        <details className="mt-2">
+          <summary className="cursor-pointer">Show raw API response</summary>
+          <pre className="text-xs mt-2 bg-white p-2 rounded overflow-auto max-h-40">
+            {JSON.stringify(books, null, 2)}
+          </pre>
+        </details>
+      </div>
 
       {/* DEBUG: Add this temporary debug section */}
       <div className="p-4 bg-yellow-100 border border-yellow-300 rounded">
