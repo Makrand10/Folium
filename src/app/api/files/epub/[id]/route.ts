@@ -1,90 +1,80 @@
 // src/app/api/files/epub/[id]/route.ts
-import { getGridFSBucket } from "@/lib/gridfs";
-import { getDb } from "@/lib/db";
-import Book, { BookDoc } from "@/models/book";
+import { NextResponse } from "next/server";
 import { ObjectId } from "mongodb";
+import { dbConnect } from "@/lib/db";
+import { getGridFSBucket } from "@/lib/gridfs";
 import { Readable } from "node:stream";
 
 export const runtime = "nodejs";
 
+function toWebReadable(nodeStream: NodeJS.ReadableStream): ReadableStream<Uint8Array> {
+  // Node 18+: convert to web stream
+  // @ts-ignore
+  return Readable.toWeb(nodeStream);
+}
+
 export async function GET(
   req: Request,
-  ctx: { params: Promise<{ id: string }> }
+  { params }: { params: { id: string } }
 ) {
-  const { id } = await ctx.params;
-
-  const cleanId = id.toLowerCase().endsWith(".epub") ? id.slice(0, -5) : id;
-
-  let fileId: ObjectId;
-  try {
-    fileId = new ObjectId(cleanId);
-  } catch {
-    return new Response("Invalid id", { status: 400 });
-  }
-
+  await dbConnect();
   const bucket = await getGridFSBucket();
 
-  const book = await Book.findOne({ fileId }).lean<BookDoc | null>();
-  if (!book) return new Response("Not found", { status: 404 });
+  const _id = new ObjectId(params.id.replace(".epub", "")); // tolerate trailing .epub
+  const file = await bucket.find({ _id }).next();
+  if (!file) return NextResponse.json({ error: "File not found" }, { status: 404 });
 
-  // ✅ native Db so .collection() works
-  const db = await getDb();
-  const fileDoc = await db
-    .collection<{ length: number; contentType?: string; filename?: string }>("epubs.files")
-    .findOne({ _id: fileId });
-  if (!fileDoc) return new Response("Not found", { status: 404 });
-
-  const total = fileDoc.length;
-  const contentType = fileDoc.contentType || "application/epub+zip";
-  const filename = `${book.title || fileDoc.filename || "book"}.epub`;
-  const etag = `"${fileId.toHexString()}"`;
-
-  if (req.headers.get("if-none-match") === etag) {
-    return new Response(null, { status: 304 });
-  }
-
+  const size = Number(file.length || 0);
+  const contentType = file.contentType || "application/epub+zip";
   const range = req.headers.get("range");
-  if (range) {
-    const m = range.match(/bytes=(\d+)-(\d+)?/);
-    if (!m) return new Response("Bad Range", { status: 416 });
 
-    const start = parseInt(m[1], 10);
-    const end = m[2] ? Math.min(parseInt(m[2], 10), total - 1) : total - 1;
-    if (start >= total || start < 0 || end < start) {
-      return new Response("Requested Range Not Satisfiable", { status: 416 });
+  // Always advertise that we support range
+  const baseHeaders = {
+    "Accept-Ranges": "bytes",
+    "Content-Type": contentType,
+    "Cache-Control": "private, max-age=0, must-revalidate",
+  } as Record<string, string>;
+
+  // Partial content
+  if (range) {
+    // e.g., "bytes=0-"
+    const match = /bytes=(\d*)-(\d*)/.exec(range);
+    const start = match && match[1] ? parseInt(match[1], 10) : 0;
+    const end =
+      match && match[2] ? Math.min(parseInt(match[2], 10), size - 1) : size - 1;
+
+    if (start >= size || start > end) {
+      return new NextResponse(null, {
+        status: 416, // Range Not Satisfiable
+        headers: {
+          ...baseHeaders,
+          "Content-Range": `bytes */${size}`,
+        },
+      });
     }
 
-    const stream = bucket.openDownloadStream(fileId, { start, end: end + 1 });
-    const webStream = Readable.toWeb(stream as any) as ReadableStream;
+    const download = bucket.openDownloadStream(_id, { start, end: end + 1 });
+    const webStream = toWebReadable(download);
 
-    return new Response(webStream, {
+    return new NextResponse(webStream, {
       status: 206,
       headers: {
-        "Content-Type": contentType,
-        "Content-Disposition": `inline; filename="${filename}"`,
-        "Accept-Ranges": "bytes",
-        "Content-Range": `bytes ${start}-${end}/${total}`,
+        ...baseHeaders,
         "Content-Length": String(end - start + 1),
-        "Cache-Control": "private, max-age=3600",
-        "ETag": etag,
-        "X-Content-Type-Options": "nosniff"
-      }
+        "Content-Range": `bytes ${start}-${end}/${size}`,
+      },
     });
   }
 
-  const stream = bucket.openDownloadStream(fileId);
-  const webStream = Readable.toWeb(stream as any) as ReadableStream;
+  // Full content
+  const download = bucket.openDownloadStream(_id);
+  const webStream = toWebReadable(download);
 
-  return new Response(webStream, {
+  return new NextResponse(webStream, {
     status: 200,
     headers: {
-      "Content-Type": contentType,
-      "Content-Disposition": `inline; filename="${filename}"`,
-      "Accept-Ranges": "bytes",
-      "Content-Length": String(total),
-      "Cache-Control": "private, max-age=3600",
-      "ETag": etag,
-      "X-Content-Type-Options": "nosniff"
-    }
+      ...baseHeaders,
+      "Content-Length": String(size),
+    },
   });
 }
