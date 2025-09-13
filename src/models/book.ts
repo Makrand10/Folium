@@ -1,3 +1,4 @@
+// src/models/book.ts
 import { Schema, model, models, InferSchemaType, Types } from "mongoose";
 
 const BookSchema = new Schema(
@@ -7,6 +8,7 @@ const BookSchema = new Schema(
     fileId: { type: Schema.Types.ObjectId, required: true }, // GridFS _id
     coverUrl: { type: String }, // Add this field for cover image
     coverFileId: { type: Schema.Types.ObjectId }, // Optional: store cover in GridFS
+    ownerId: { type: Schema.Types.ObjectId, required: true, ref: "User" }, // Add this line
   },
   { timestamps: true }
 );

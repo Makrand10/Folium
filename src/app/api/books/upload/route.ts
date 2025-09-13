@@ -1,3 +1,5 @@
+// src/app/api/books/upload/route.ts
+
 import { NextResponse } from "next/server";
 import { Readable } from "node:stream";
 import crypto from "node:crypto";
@@ -65,7 +67,8 @@ export async function POST(req: Request) {
     title, 
     author, 
     fileId,
-    coverUrl 
+    coverUrl,
+    ownerId: session.user.id, // Add this line
   });
 
   return NextResponse.json({ book }, { status: 201 });

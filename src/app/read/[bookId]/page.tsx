@@ -20,6 +20,8 @@ export default function ReaderPage() {
   const [bookUrl, setBookUrl] = useState<string | null>(null);
   const [location, setLocation] = useState<string | number | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
+  const [isAdding, setIsAdding] = useState(false);
+  const [isAdded, setIsAdded] = useState(false);
 
   // refs so values persist across renders
   const locationsApiRef = useRef<any>(null);
@@ -55,12 +57,47 @@ export default function ReaderPage() {
     })();
   }, [bookId]);
 
-  if (!bookId)  return <div className="p-6">Missing book id…</div>;
-  if (error)    return <div className="p-6 text-red-600">Error: {error}</div>;
+  // Handle adding book to library
+  const handleAddToLibrary = async () => {
+    if (!bookId || isAdding || isAdded) return;
+
+    setIsAdding(true);
+    try {
+      const res = await fetch("/api/user/library", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bookId }),
+      });
+
+      if (res.ok) {
+        setIsAdded(true);
+      } else {
+        const errorData = await res.json();
+        alert(`Failed to add book: ${errorData.error || res.statusText}`);
+      }
+    } catch (e) {
+      alert("An error occurred while adding the book.");
+    } finally {
+      setIsAdding(false);
+    }
+  };
+
+  if (!bookId)  return <div className="p-6">Missing book id…</div>;
+  if (error)    return <div className="p-6 text-red-600">Error: {error}</div>;
   if (!bookUrl) return <div className="p-6">Loading…</div>;
 
   return (
-    <div className="h-[calc(100vh-64px)]">
+    <div className="h-[calc(100vh-64px)] relative">
+      <div className="absolute top-4 right-4 z-10">
+        <button
+          onClick={handleAddToLibrary}
+          disabled={isAdding || isAdded}
+          className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {isAdding ? "Adding..." : isAdded ? "Added to Library!" : "Add to My Library"}
+        </button>
+      </div>
+
       <ReactReader
         url={bookUrl}
         epubOptions={{ openAs: "epub" }}
