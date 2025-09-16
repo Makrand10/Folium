@@ -20,6 +20,9 @@ export default function ReaderPage() {
   const [bookUrl, setBookUrl] = useState<string | null>(null);
   const [location, setLocation] = useState<string | number | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
+
+  // library button state
+  const [checking, setChecking] = useState(true);
   const [isAdding, setIsAdding] = useState(false);
   const [isAdded, setIsAdded] = useState(false);
 
@@ -57,10 +60,25 @@ export default function ReaderPage() {
     })();
   }, [bookId]);
 
+  // 3) check if book already in library (to hide button)
+  useEffect(() => {
+    if (!bookId) return;
+    let abort = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/user/library?bookId=${bookId}`, { cache: "no-store" });
+        const data = await res.json().catch(() => ({}));
+        if (!abort) setIsAdded(!!data?.inLibrary);
+      } finally {
+        if (!abort) setChecking(false);
+      }
+    })();
+    return () => { abort = true; };
+  }, [bookId]);
+
   // Handle adding book to library
   const handleAddToLibrary = async () => {
     if (!bookId || isAdding || isAdded) return;
-
     setIsAdding(true);
     try {
       const res = await fetch("/api/user/library", {
@@ -68,42 +86,42 @@ export default function ReaderPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ bookId }),
       });
-
-      if (res.ok) {
-        setIsAdded(true);
-      } else {
-        const errorData = await res.json();
-        alert(`Failed to add book: ${errorData.error || res.statusText}`);
+      if (res.ok) setIsAdded(true);
+      else {
+        const e = await res.json().catch(() => ({}));
+        alert(`Failed to add book: ${e?.error || res.statusText}`);
       }
-    } catch (e) {
+    } catch {
       alert("An error occurred while adding the book.");
     } finally {
       setIsAdding(false);
     }
   };
 
-  if (!bookId)  return <div className="p-6">Missing book id…</div>;
-  if (error)    return <div className="p-6 text-red-600">Error: {error}</div>;
+  if (!bookId)  return <div className="p-6">Missing book id…</div>;
+  if (error)    return <div className="p-6 text-red-600">Error: {error}</div>;
   if (!bookUrl) return <div className="p-6">Loading…</div>;
 
   return (
     <div className="h-[calc(100vh-64px)] relative">
-      <div className="absolute top-4 right-4 z-10">
-        <button
-          onClick={handleAddToLibrary}
-          disabled={isAdding || isAdded}
-          className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {isAdding ? "Adding..." : isAdded ? "Added to Library!" : "Add to My Library"}
-        </button>
-      </div>
+      {/* Add-to-Library button (hidden when already added) */}
+      {!checking && !isAdded && (
+        <div className="absolute top-4 right-4 z-10">
+          <button
+            onClick={handleAddToLibrary}
+            disabled={isAdding}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isAdding ? "Adding..." : "Add to My Library"}
+          </button>
+        </div>
+      )}
 
       <ReactReader
         url={bookUrl}
         epubOptions={{ openAs: "epub" }}
         location={location}
         locationChanged={(loc: any) => {
-          // react-reader sometimes passes CFI string directly
           const cfi = typeof loc === "string" ? loc : loc?.start?.cfi;
           if (cfi) {
             lastCfiRef.current = cfi;
@@ -130,7 +148,6 @@ export default function ReaderPage() {
             .then(() => rendition.book.locations.generate(1600))
             .then(() => {
               locationsApiRef.current = rendition.book.locations;
-              // try an initial save once locations are ready
               const cfi = lastCfiRef.current || (rendition?.location?.start?.cfi ?? null);
               if (cfi) {
                 const pct01 = locationsApiRef.current.percentageFromCfi(cfi) || 0;
@@ -154,13 +171,11 @@ export default function ReaderPage() {
               if (locationsApiRef.current && cfi) {
                 pct01 = locationsApiRef.current.percentageFromCfi(cfi) || 0;
               } else if (typeof loc?.start?.percentage === "number") {
-                pct01 = loc.start.percentage; // fallback
+                pct01 = loc.start.percentage;
               }
             } catch {}
 
             const pct = +(Math.min(100, Math.max(0, pct01 * 100))).toFixed(1);
-
-            // avoid spamming: only save if changed by ≥0.2%
             if (Math.abs(pct - lastPctRef.current) < 0.2) return;
             lastPctRef.current = pct;
 
@@ -171,11 +186,9 @@ export default function ReaderPage() {
             }).catch(() => {});
           };
 
-          // Save on first display + later relocates
           rendition.on("displayed", (section: any) => {
             const cfi = section?.start?.cfi || lastCfiRef.current;
             if (!cfi) return;
-            // fake a loc-shape for save()
             save({ start: { cfi } });
           });
 

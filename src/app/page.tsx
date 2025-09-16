@@ -1,8 +1,9 @@
-// Temporarily update your src/app/page.tsx to debug what the API is returning
+// src/app/page.tsx
 import SearchBar from "@/components/searchbar";
 import BookCard from "@/components/bookcard";
 import ContinueCard from "@/components/continuecard";
 import { getServerAuthSession } from "@/auth";
+import LibraryButton from "@/components/librarybutton"; // 👈 import the button
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -27,40 +28,9 @@ export default async function HomePage() {
 
   const books = await getLatest();
 
-  // 🐛 DEBUG: Log what we're getting from the API
-  console.log("📚 BOOKS DEBUG:");
-  console.log("- Number of books:", books.length);
-  console.log("- First book data:", JSON.stringify(books[0], null, 2));
-  console.log("- All book titles and coverUrls:", books.map(b => ({ 
-    title: b.title, 
-    coverUrl: b.coverUrl,
-    hasCover: !!b.coverUrl 
-  })));
-
   return (
     <main className="max-w-6xl mx-auto px-6 py-8 space-y-8">
       <SearchBar />
-
-      {/* 🐛 DEBUG: Show raw book data temporarily */}
-      <div className="p-4 bg-blue-100 border border-blue-300 rounded">
-        <h3 className="font-semibold">📚 Books Debug Info:</h3>
-        <p>Total books: <strong>{books.length}</strong></p>
-        <p>Books with covers: <strong>{books.filter(b => b.coverUrl).length}</strong></p>
-        <details className="mt-2">
-          <summary className="cursor-pointer">Show raw API response</summary>
-          <pre className="text-xs mt-2 bg-white p-2 rounded overflow-auto max-h-40">
-            {JSON.stringify(books, null, 2)}
-          </pre>
-        </details>
-      </div>
-
-      {/* DEBUG: Add this temporary debug section */}
-      <div className="p-4 bg-yellow-100 border border-yellow-300 rounded">
-        <h3 className="font-semibold">🐛 Debug Info (remove this in production):</h3>
-        <p>Is Authenticated: <strong>{isAuthed ? "YES" : "NO"}</strong></p>
-        <p>User ID: <strong>{session?.user?.id || "None"}</strong></p>
-        <p>User Email: <strong>{session?.user?.email || "None"}</strong></p>
-      </div>
 
       {!isAuthed ? (
         <section className="rounded-xl border p-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
@@ -71,10 +41,16 @@ export default async function HomePage() {
             </p>
           </div>
           <div className="flex gap-3">
-            <a href="/signup" className="inline-flex items-center rounded-lg border px-4 py-2 font-medium hover:shadow">
+            <a
+              href="/signup"
+              className="inline-flex items-center rounded-lg border px-4 py-2 font-medium hover:shadow"
+            >
               Sign up
             </a>
-            <a href="/signin" className="inline-flex items-center rounded-lg bg-black text-white px-4 py-2 font-medium hover:opacity-90">
+            <a
+              href="/signin"
+              className="inline-flex items-center rounded-lg bg-black text-white px-4 py-2 font-medium hover:opacity-90"
+            >
               Sign in
             </a>
           </div>
@@ -87,9 +63,15 @@ export default async function HomePage() {
           </div>
           <div>
             <h2 className="mb-2 font-semibold">Upload</h2>
-            <a href="/upload" className="block rounded-xl border p-4 hover:shadow text-center">
+            <a
+              href="/upload"
+              className="block rounded-xl border p-4 hover:shadow text-center mb-3"
+            >
               + Upload EPUB
             </a>
+
+            {/* 👇 New Library button just below upload */}
+            <LibraryButton />
           </div>
         </section>
       )}
@@ -97,10 +79,14 @@ export default async function HomePage() {
       <section>
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-semibold">Explore</h2>
-          <a className="text-sm text-blue-600" href="/explore">See all</a>
+          <a className="text-sm text-blue-600" href="/explore">
+            See all
+          </a>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-6 gap-4">
-          {books.map((b: any) => <BookCard key={b._id} {...b} />)}
+          {books.map((b: any) => (
+            <BookCard key={b._id} {...b} />
+          ))}
         </div>
       </section>
     </main>

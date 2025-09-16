@@ -1,7 +1,7 @@
 // src/lib/library.ts
-import { connectToDB } from "@/lib/db";           // your existing connector
+import { dbConnect} from "@/lib/db";           // your existing connector
 import ReadingProgress from "@/models/readingprogress";
-import Book from "@/models/Book";
+import Book from "@/models/book";
 
 export type LibraryItem = {
   book: any;              // you can replace with your Book type
@@ -12,7 +12,7 @@ export async function getUserLibrary(userId: string): Promise<{
   lastRead: LibraryItem | null;
   items: LibraryItem[];
 }> {
-  await connectToDB();
+  await dbConnect();
 
   const progresses = await ReadingProgress.find({ userId })
     .sort({ updatedAt: -1 })
