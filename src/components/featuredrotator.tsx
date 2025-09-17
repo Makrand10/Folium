@@ -1,4 +1,3 @@
-// src/components/featuredrotator.tsx
 "use client";
 
 import Link from "next/link";
@@ -38,32 +37,51 @@ export default function FeaturedRotator({ books, rotateMs = 8000 }: Props) {
   const b = pool[idx];
   const stub =
     (b.description && b.description.trim()) ||
-    "A delightful read. Description coming soon.";
+    "A mesmerizing and surreal journey into the depths of identity, loss, and the hidden connections that shape our lives. A modern masterpiece.";
 
   return (
-    <section className="rounded-xl border p-6">
-      <div className="flex gap-6 items-start">
-        <div className="w-40 h-56 rounded-md bg-gray-100 overflow-hidden shrink-0">
+    <section className="relative rounded-xl overflow-hidden bg-gradient-to-r from-gray-900 via-gray-800 to-gray-900 min-h-[300px]">
+      {/* Background overlay */}
+      <div className="absolute inset-0 bg-black/20"></div>
+      
+      <div className="relative z-10 flex gap-8 items-center p-8 md:p-12">
+        {/* Book Cover */}
+        <div className="w-32 h-48 md:w-40 md:h-56 rounded-lg bg-gray-700 overflow-hidden shrink-0 shadow-2xl">
           {b.coverUrl ? (
             <img
               src={b.coverUrl}
-              alt={`Book cover of ${b.title}`}
+              alt={`📖Book cover of ${b.title}`}
               className="w-full h-full object-cover"
             />
-          ) : null}
+          ) : (
+            <div className="w-full h-full bg-gray-600 flex items-center justify-center">
+              <span className="text-4xl">📖</span>
+            </div>
+          )}
         </div>
 
-        <div className="flex-1 space-y-2">
-          <h1 className="text-3xl font-extrabold">{b.title}</h1>
-          {b.author ? <p className="text-sm">{b.author}</p> : null}
-          <p className="text-sm text-gray-600">{stub}</p>
+        {/* Book Info */}
+        <div className="flex-1 space-y-4 text-center md:text-left">
+          <h1 className="text-3xl md:text-5xl font-bold text-white leading-tight">
+            {b.title}
+          </h1>
+          {b.author && (
+            <h2 className="text-lg md:text-xl text-gray-300 font-medium">
+              {b.author}
+            </h2>
+          )}
+          <p className="text-sm md:text-base text-gray-300 max-w-2xl leading-relaxed">
+            {stub}
+          </p>
 
-          <Link
-            href={`/read/${b._id}`}
-            className="inline-flex items-center rounded-lg bg-black text-white px-4 py-2 font-medium"
-          >
-            Start Reading
-          </Link>
+          <div className="pt-2">
+            <Link
+              href={`/read/${b._id}`}
+              className="inline-flex items-center gap-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 font-medium transition-colors shadow-lg"
+            >
+              📖 Start Reading
+            </Link>
+          </div>
         </div>
       </div>
     </section>

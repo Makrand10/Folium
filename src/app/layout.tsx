@@ -13,12 +13,12 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className="antialiased">
+      <body className="antialiased bg-gray-900 text-white min-h-screen">
         <AuthProvider>
-          <header className="border-b p-4">
+          <header className="border-b border-gray-700 bg-gray-800 p-4">
             <div className="max-w-6xl mx-auto flex items-center gap-4">
               {/* Left: Logo */}
-              <h1 className="text-xl font-semibold shrink-0">
+              <h1 className="text-xl font-semibold shrink-0 text-white">
                 <a href="/">FOLIUM</a>
               </h1>
 

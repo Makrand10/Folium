@@ -1,20 +1,28 @@
+// src/components/searchbar.tsx
 "use client";
-import { useRouter } from "next/navigation";
+
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 export default function SearchBar() {
-  const [q, setQ] = useState("");
+  const [query, setQuery] = useState("");
   const router = useRouter();
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (query.trim()) {
+      router.push(`/search?q=${encodeURIComponent(query.trim())}`);
+    }
+  };
+
   return (
-    <form
-      onSubmit={e => { e.preventDefault(); router.push(`/search?q=${encodeURIComponent(q)}`); }}
-      className="w-full max-w-xl mx-auto"
-    >
+    <form onSubmit={handleSubmit} className="w-full max-w-md mx-auto">
       <input
-        value={q}
-        onChange={e => setQ(e.target.value)}
-        placeholder="Search books..."
-        className="w-full border rounded-lg px-4 py-2"
+        type="text"
+        placeholder="Search books, authors..."
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        className="w-full px-4 py-2 rounded-lg border border-gray-600 bg-gray-700 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
       />
     </form>
   );
