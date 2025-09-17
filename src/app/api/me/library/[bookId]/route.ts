@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { dbConnect } from "@/lib/db";
 import User from "@/models/user";
 import { getServerAuthSession } from "@/auth";
@@ -13,58 +13,67 @@ async function getUserId() {
 }
 
 export async function GET(
-  _req: Request,
-  { params }: { params: { bookId: string } }
+  _req: NextRequest,
+  ctx: { params: Promise<{ bookId: string }> }
 ) {
   await dbConnect();
   const userId = await getUserId();
   if (!userId) return NextResponse.json({ inLibrary: false }, { status: 401 });
-  if (!Types.ObjectId.isValid(params.bookId)) {
-    return NextResponse.json({ inLibrary: false }, { status: 400 });
-  }
 
-  // ✅ No need to read user.library; just check membership
+  const { bookId } = await ctx.params;
+
+  if (!Types.ObjectId.isValid(bookId)) {
+    return NextResponse.json({ inLibrary: false }, { status: 400 });
+    }
+
+  // No need to read user.library; just check membership
   const exists = await User.exists({
     _id: userId,
-    library: new Types.ObjectId(params.bookId),
+    library: new Types.ObjectId(bookId),
   });
 
   return NextResponse.json({ inLibrary: !!exists });
 }
 
 export async function POST(
-  _req: Request,
-  { params }: { params: { bookId: string } }
+  _req: NextRequest,
+  ctx: { params: Promise<{ bookId: string }> }
 ) {
   await dbConnect();
   const userId = await getUserId();
   if (!userId) return NextResponse.json({ ok: false }, { status: 401 });
-  if (!Types.ObjectId.isValid(params.bookId)) {
+
+  const { bookId } = await ctx.params;
+
+  if (!Types.ObjectId.isValid(bookId)) {
     return NextResponse.json({ ok: false, error: "invalid id" }, { status: 400 });
   }
 
   await User.updateOne(
     { _id: userId },
-    { $addToSet: { library: new Types.ObjectId(params.bookId) } }
+    { $addToSet: { library: new Types.ObjectId(bookId) } }
   );
 
   return NextResponse.json({ ok: true });
 }
 
 export async function DELETE(
-  _req: Request,
-  { params }: { params: { bookId: string } }
+  _req: NextRequest,
+  ctx: { params: Promise<{ bookId: string }> }
 ) {
   await dbConnect();
   const userId = await getUserId();
   if (!userId) return NextResponse.json({ ok: false }, { status: 401 });
-  if (!Types.ObjectId.isValid(params.bookId)) {
+
+  const { bookId } = await ctx.params;
+
+  if (!Types.ObjectId.isValid(bookId)) {
     return NextResponse.json({ ok: false, error: "invalid id" }, { status: 400 });
   }
 
   await User.updateOne(
     { _id: userId },
-    { $pull: { library: new Types.ObjectId(params.bookId) } }
+    { $pull: { library: new Types.ObjectId(bookId) } }
   );
 
   return NextResponse.json({ ok: true });
