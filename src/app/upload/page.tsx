@@ -9,10 +9,8 @@ export default async function UploadPage() {
     redirect(`/signin?callbackUrl=${encodeURIComponent("/upload")}`);
   }
 
-  return (
-    <main className="px-6 py-8">
-      <h1 className="text-xl font-semibold mb-4">Upload EPUB</h1>
-      <UploadForm />
-    </main>
-  );
+  return <UploadForm />;
 }
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
