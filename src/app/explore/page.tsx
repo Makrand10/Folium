@@ -8,7 +8,6 @@ export default async function ExplorePage() {
   let books: any[] = [];
 
   try {
-    // Relative URL → automatically hits the same host (works locally & on Vercel)
     const res = await fetch("/api/books/search", {
       cache: "no-store",
       headers: { accept: "application/json" },
@@ -19,7 +18,6 @@ export default async function ExplorePage() {
       const data = await res.json();
       books = Array.isArray(data?.books) ? data.books : [];
     } else {
-      // Don’t throw during SSR — log a small preview for debugging
       const preview = await res.text().catch(() => "");
       console.error("❌ /explore -> /api/books/search failed", {
         status: res.status,
@@ -34,6 +32,7 @@ export default async function ExplorePage() {
   return (
     <main className="px-6 py-8">
       <h1 className="text-xl font-semibold mb-4">Explore</h1>
+
       {books.length === 0 ? (
         <p className="text-gray-500">
           No books found (or the API failed). Check server logs.
@@ -42,6 +41,7 @@ export default async function ExplorePage() {
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-6 gap-4">
           {books.map((b) => (
             <BookCard key={b._id || b.id} {...b} />
+
           ))}
         </div>
       )}
