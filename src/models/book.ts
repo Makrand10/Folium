@@ -5,7 +5,7 @@ const BookSchema = new Schema(
   {
     title: { type: String, required: true },
     author: { type: String },
-    description: { type: String, default: "" }, // ✅ new
+    description: { type: String, default: "" },
     fileId: { type: Schema.Types.ObjectId, required: true }, // GridFS _id
     coverUrl: { type: String },
     coverFileId: { type: Schema.Types.ObjectId },
@@ -14,9 +14,13 @@ const BookSchema = new Schema(
   { timestamps: true }
 );
 
-// Text index for search (include description)
+// ✅ Text index used by search
 BookSchema.index({ title: "text", author: "text", description: "text" });
+
+// ✅ Fast “latest” feed
+BookSchema.index({ createdAt: -1 });
 
 export type BookDoc = InferSchemaType<typeof BookSchema> & { _id: Types.ObjectId };
 
-export default models.Book || model("Book", BookSchema);
+// Keep default export for `import Book from "@/models/book"`
+export default (models.Book as any) || model("Book", BookSchema);

@@ -1,29 +1,36 @@
-import { NextRequest, NextResponse } from "next/server";
+// src/app/api/books/[id]/route.ts
+import { NextResponse } from "next/server";
 import { dbConnect } from "@/lib/db";
-import Book, { type BookDoc } from "@/models/book";
+import Book from "@/models/book";
+import type { BookDoc } from "@/models/book";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export async function GET(
-  _req: NextRequest,
-  ctx: { params: Promise<{ id: string }> }
+  _req: Request,
+  { params }: { params: { id: string } }
 ) {
-  await dbConnect();
+  try {
+    await dbConnect();
 
-  const { id } = await ctx.params;
+    const id = params?.id;
+    if (!id) {
+      return NextResponse.json({ error: "Missing id" }, { status: 400 });
+    }
 
-  // Make lean() return a single typed doc
-  const book = await Book.findById(id).lean<BookDoc | null>();
-  if (!book) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    // `lean<T>()` generic can be flaky depending on mongoose types.
+    // Query, then cast the result to the expected type.
+    const book = (await Book.findById(id).lean().exec()) as BookDoc | null;
 
-  const fileUrl = `/api/files/epub/${book.fileId}.epub`;
+    if (!book) {
+      return NextResponse.json({ error: "Book not found" }, { status: 404 });
+    }
 
-  return NextResponse.json({
-    book: {
-      _id: String(book._id),
-      title: book.title,
-      author: book.author ?? null,
-      fileUrl,
-    },
-  });
+    return NextResponse.json({ book });
+  } catch (err: any) {
+    console.error("GET /api/books/[id] error:", err?.message || err);
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
+  }
 }
