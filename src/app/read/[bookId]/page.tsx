@@ -10,6 +10,47 @@ const ReactReader: any = dynamic(
   { ssr: false, loading: () => <div className="p-6">Loading reader…</div> }
 );
 
+// ---------- Minimal IndexedDB helpers ----------
+function openDB(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open("epubCache", 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains("files")) db.createObjectStore("files");
+      if (!db.objectStoreNames.contains("meta")) db.createObjectStore("meta");
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function idbGet<T = unknown>(store: "files" | "meta", key: string): Promise<T | undefined> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(store, "readonly");
+    const req = tx.objectStore(store).get(key);
+    req.onsuccess = () => resolve(req.result as T | undefined);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function idbSet(store: "files" | "meta", key: string, value: any): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(store, "readwrite");
+    tx.objectStore(store).put(value, key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+async function idbDel(store: "files" | "meta", key: string): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(store, "readwrite");
+    tx.objectStore(store).delete(key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
 export default function ReaderPage() {
   const params = useParams<{ bookId: string | string[] }>();
   const bookId = useMemo(
@@ -17,7 +58,8 @@ export default function ReaderPage() {
     [params]
   );
 
-  const [bookUrl, setBookUrl] = useState<string | null>(null);
+  const [remoteUrl, setRemoteUrl] = useState<string | null>(null); // from /api/books/[id]
+  const [sourceUrl, setSourceUrl] = useState<string | null>(null); // blob: or remote fallback for <ReactReader url>
   const [location, setLocation] = useState<string | number | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
 
@@ -26,13 +68,41 @@ export default function ReaderPage() {
   const [isAdding, setIsAdding] = useState(false);
   const [isAdded, setIsAdded] = useState(false);
 
-  // refs so values persist across renders
+  // user id (for per-user cache key)
+  const [userId, setUserId] = useState<string | null>(null);
+
+  // refs
   const locationsApiRef = useRef<any>(null);
   const saveTimerRef = useRef<any>(null);
   const lastCfiRef = useRef<string | null>(null);
   const lastPctRef = useRef<number>(-1);
+  const activeBlobUrlRef = useRef<string | null>(null);
 
-  // 1) load book metadata
+  // cleanup blob URL when unmounting or swapping
+  useEffect(() => {
+    return () => {
+      if (activeBlobUrlRef.current) {
+        URL.revokeObjectURL(activeBlobUrlRef.current);
+        activeBlobUrlRef.current = null;
+      }
+    };
+  }, []);
+
+  // fetch session to identify user (NextAuth)
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch("/api/auth/session", { cache: "no-store" });
+        if (!r.ok) throw new Error();
+        const j = await r.json();
+        setUserId(j?.user?.id || null);
+      } catch {
+        setUserId(null); // guest
+      }
+    })();
+  }, []);
+
+  // 1) load book metadata -> remote streaming URL
   useEffect(() => {
     if (!bookId) return;
     (async () => {
@@ -40,7 +110,7 @@ export default function ReaderPage() {
         const res = await fetch(`/api/books/${bookId}`, { cache: "no-store" });
         if (!res.ok) throw new Error(`meta ${res.status}`);
         const data = await res.json();
-        setBookUrl(data.book.fileUrl as string);
+        setRemoteUrl(data.book.fileUrl as string);
       } catch (e: any) {
         setError(e?.message || "Failed to load book");
       }
@@ -73,10 +143,106 @@ export default function ReaderPage() {
         if (!abort) setChecking(false);
       }
     })();
-    return () => { abort = true; };
+    return () => {
+      abort = true;
+    };
   }, [bookId]);
 
-  // Handle adding book to library
+  // ---------- Local cache orchestration ----------
+  const cacheKey = useMemo(() => {
+    if (!bookId) return null;
+    const uid = userId || "guest";
+    return `${uid}:${bookId}`;
+  }, [userId, bookId]);
+
+  // When we know the remoteUrl (file stream), try cache -> fallback network.
+  useEffect(() => {
+    if (!remoteUrl || !cacheKey) return;
+
+    let cancelled = false;
+
+    (async () => {
+      // 1) Try to serve from cache immediately (fast start)
+      try {
+        const cachedBlob = await idbGet<Blob>("files", cacheKey);
+        if (cachedBlob && !cancelled) {
+          const blobUrl = URL.createObjectURL(cachedBlob);
+          if (activeBlobUrlRef.current) URL.revokeObjectURL(activeBlobUrlRef.current);
+          activeBlobUrlRef.current = blobUrl;
+          setSourceUrl(blobUrl);
+        }
+      } catch {
+        // ignore cache errors and continue
+      }
+
+      // 2) Validate/update cache in background (ETag/Last-Modified if available)
+      try {
+        // Pull any saved validators
+        const meta = (await idbGet<any>("meta", cacheKey)) || {};
+        const headers: Record<string, string> = {};
+        if (meta.etag) headers["If-None-Match"] = meta.etag;
+        if (meta.lastModified) headers["If-Modified-Since"] = meta.lastModified;
+
+        const res = await fetch(remoteUrl, { headers }); // stream endpoint
+        if (res.status === 304) {
+          // Cache is fresh; if we didn't have a cached URL yet, load it now
+          if (!activeBlobUrlRef.current) {
+            const cachedBlob = await idbGet<Blob>("files", cacheKey);
+            if (cachedBlob && !cancelled) {
+              const blobUrl = URL.createObjectURL(cachedBlob);
+              activeBlobUrlRef.current = blobUrl;
+              setSourceUrl(blobUrl);
+            }
+          }
+          return;
+        }
+
+        if (!res.ok) throw new Error(`Fetch ${res.status}`);
+
+        const etag = res.headers.get("ETag") || undefined;
+        const lastModified = res.headers.get("Last-Modified") || undefined;
+        const blob = await res.blob();
+
+        await idbSet("files", cacheKey, blob);
+        await idbSet("meta", cacheKey, { etag, lastModified, size: blob.size, ts: Date.now() });
+
+        if (!cancelled) {
+          const blobUrl = URL.createObjectURL(blob);
+          if (activeBlobUrlRef.current) URL.revokeObjectURL(activeBlobUrlRef.current);
+          activeBlobUrlRef.current = blobUrl;
+          setSourceUrl(blobUrl);
+        }
+      } catch (e) {
+        // If we didn't manage to show cached content above, at least show remote
+        if (!cancelled && !activeBlobUrlRef.current) {
+          setSourceUrl(remoteUrl);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [remoteUrl, cacheKey]);
+
+  // Optional: allow manual cache reset (handy while testing)
+  async function clearThisCache() {
+    if (!cacheKey) return;
+    try {
+      if (activeBlobUrlRef.current) {
+        URL.revokeObjectURL(activeBlobUrlRef.current);
+        activeBlobUrlRef.current = null;
+      }
+      await idbDel("files", cacheKey);
+      await idbDel("meta", cacheKey);
+      setSourceUrl(remoteUrl ?? null);
+      alert("Local cache cleared for this book.");
+    } catch {
+      alert("Failed to clear local cache.");
+    }
+  }
+
+  // Add-to-Library
   const handleAddToLibrary = async () => {
     if (!bookId || isAdding || isAdded) return;
     setIsAdding(true);
@@ -98,15 +264,16 @@ export default function ReaderPage() {
     }
   };
 
-  if (!bookId)  return <div className="p-6">Missing book id…</div>;
-  if (error)    return <div className="p-6 text-red-600">Error: {error}</div>;
-  if (!bookUrl) return <div className="p-6">Loading…</div>;
+  if (!bookId) return <div className="p-6">Missing book id…</div>;
+  if (error) return <div className="p-6 text-red-600">Error: {error}</div>;
+  if (!remoteUrl) return <div className="p-6">Loading…</div>;
+  if (!sourceUrl) return <div className="p-6">Preparing your cached copy…</div>;
 
   return (
     <div className="h-[calc(100vh-64px)] relative">
       {/* Add-to-Library button (hidden when already added) */}
       {!checking && !isAdded && (
-        <div className="absolute top-4 right-4 z-10">
+        <div className="absolute top-4 right-4 z-10 flex gap-2">
           <button
             onClick={handleAddToLibrary}
             disabled={isAdding}
@@ -114,11 +281,20 @@ export default function ReaderPage() {
           >
             {isAdding ? "Adding..." : "Add to My Library"}
           </button>
+
+          {/* Optional dev utility to clear cache for this book */}
+          <button
+            onClick={clearThisCache}
+            className="bg-gray-200 text-gray-800 px-3 py-2 rounded-lg hover:bg-gray-300"
+            title="Clear local cache for this book"
+          >
+            Clear Cache
+          </button>
         </div>
       )}
 
       <ReactReader
-        url={bookUrl}
+        url={sourceUrl} // <-- use cached blob: URL when available
         epubOptions={{ openAs: "epub" }}
         location={location}
         locationChanged={(loc: any) => {
@@ -163,7 +339,7 @@ export default function ReaderPage() {
             .catch(() => {});
 
           const save = (loc: any) => {
-            const cfi = loc?.start?.cfi;
+            const cfi = loc?.start?.cfi || lastCfiRef.current;
             lastCfiRef.current = cfi || lastCfiRef.current;
 
             let pct01 = 0;
